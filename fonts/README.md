@@ -32,6 +32,7 @@ TRM フォント JB は模型製作用の書体で、キーの割り当てが普
 ## Windows の書体
 
 `C:\Windows\Fonts` にあれば読む。いずれも再配布できないので、リポジトリには入れていない。
+**使うのは地名（漢字）の欄だけ**で、分類番号・ひらがな・一連番号には使わない。
 
 meiryo, meiryob, msgothic, YuGothB, YuGothM, BIZ-UDGothicB/R, UDDigiKyokashoN-B/R,
 HGRSGU（創英角ゴシックUB）, HGRGE, HGRSMP

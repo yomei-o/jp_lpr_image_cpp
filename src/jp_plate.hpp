@@ -421,20 +421,23 @@ struct FontSet {
     for (int cp : encode(f, role, text)) if (cp != 0x30FB && !f.has(cp)) return false;   // ・ is drawn
     return true;
   }
+  // Windows faces are for the region name (kanji) only: their digits and kana look nothing like a
+  // plate's, so the class number, hiragana and serial come from the bundled faces.
+  static bool allowed(const Font& f, Role role) { return !f.system || role == REGION; }
   // Pick one face for a whole field so a field never mixes typefaces. `trm_p`: chance of TRM when
   // it can draw the field. -1 = nothing can draw all of it (the caller falls back per glyph).
   int pick(Role role, const std::string& text, Rng& rng, double trm_p) const {
     std::vector<int> any, trm;
     for (size_t i = 0; i < fonts.size(); ++i) {
-      if (!usable(fonts[i], role, text)) continue;
+      if (!allowed(fonts[i], role) || !usable(fonts[i], role, text)) continue;
       (fonts[i].trm ? trm : any).push_back((int)i);
     }
     if (!trm.empty() && (any.empty() || rng.chance(trm_p))) return rng.pick(trm);
     if (!any.empty()) return rng.pick(any);
     return -1;
   }
-  const Font* fallback(int cp) const {
-    for (const Font& f : fonts) if (!f.trm && f.has(cp)) return &f;
+  const Font* fallback(Role role, int cp) const {
+    for (const Font& f : fonts) if (!f.trm && allowed(f, role) && f.has(cp)) return &f;
     return nullptr;
   }
 };
@@ -595,7 +598,7 @@ inline std::vector<Glyph> glyphs_for(const FontSet& fs, int face, Role role, con
     return out;
   }
   for (int cp : utf8(text)) {                 // nothing draws the whole field: borrow per glyph
-    const Font* f = fs.fallback(cp);
+    const Font* f = fs.fallback(role, cp);
     if (f) out.push_back({f, cp});
   }
   return out;

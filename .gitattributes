@@ -1,0 +1,5 @@
+* text=auto
+*.ttf binary
+*.ttc binary
+*.otf binary
+fonts/licenses/JB1.2-*.txt -text

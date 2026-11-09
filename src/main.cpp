@@ -58,6 +58,7 @@ static void usage() {
       "  --trm-p P                (0.35) chance of TRM font JB for a field it can draw\n"
       "  --crops                  also write recogniser crops in the alpr_jp layout + labels.tsv\n"
       "  --crop-min PX            (40) skip crops narrower than this\n"
+      "  --crop-jpg Q             save crops as JPEG of quality Q (default PNG)\n"
       "  --no-scenes              crops only (scenes are still rendered, not saved)\n"
       "  --png                    save scenes as PNG instead of JPEG\n"
       "  --threads N              OpenMP threads\n"
@@ -73,6 +74,7 @@ int main(int argc, char** argv) {
   bool crops = flag(argc, argv, "--crops"), scenes = !flag(argc, argv, "--no-scenes");
   bool by_category = arg(argc, argv, "--classes", "plate") == "category";
   int crop_min = atoi(arg(argc, argv, "--crop-min", "40").c_str());
+  int crop_jpg = atoi(arg(argc, argv, "--crop-jpg", "0").c_str());     // >0: crops as JPEG of this quality
 
   // fonts: bundled first (they are the fallback order), then the OS faces
   FontSet fs;
@@ -155,7 +157,7 @@ int main(int argc, char** argv) {
   printf("%zu faces (%d system, TRM %s), %zu regions, %zu backgrounds%s\n", fs.fonts.size(), nsys,
          ntrm ? "yes" : "no", regions.size(), so.backgrounds.size(), so.backgrounds.empty() ? " (procedural)" : "");
 
-  std::vector<std::string> meta((size_t)count), clab((size_t)count);
+  std::vector<std::string> meta((size_t)count), clab((size_t)count), ccorners((size_t)count);
   std::vector<int> nplates((size_t)count, 0), ncrops((size_t)count, 0);
 #pragma omp parallel for schedule(dynamic)
   for (int i = 0; i < count; ++i) {
@@ -168,7 +170,7 @@ int main(int argc, char** argv) {
     char name[32];
     snprintf(name, sizeof name, "%08d", idx);
     if (crops) jpeg_roundtrip(im, q);         // crops get the same block artefacts as the scene
-    std::string yolo, m, cl;
+    std::string yolo, m, cl, ccor;
     for (size_t k = 0; k < placed.size(); ++k) {
       const Placed& p = placed[k];
       BBox b = bbox(p.quad);
@@ -183,10 +185,16 @@ int main(int argc, char** argv) {
       m += "\t" + p.fonts + "\n";
       if (crops && x1 - x0 >= crop_min) {
         double mx = (x1 - x0) * rng.range(0.02, 0.15), my = (y1 - y0) * rng.range(0.02, 0.2);
-        Img c = crop(im, (int)(x0 - mx), (int)(y0 - my), (int)std::ceil(x1 + mx), (int)std::ceil(y1 + my));
-        std::string key = std::string(kCategoryDir[p.text.category]) + "/" + p.text.region + "/" + name + "_" + std::to_string(k) + ".png";
-        if (save_image(out + "/crops/" + key, c, 0)) {
+        int cx0 = std::max(0, (int)(x0 - mx)), cy0 = std::max(0, (int)(y0 - my));
+        Img c = crop(im, cx0, cy0, (int)std::ceil(x1 + mx), (int)std::ceil(y1 + my));
+        std::string key = std::string(kCategoryDir[p.text.category]) + "/" + p.text.region + "/" + name + "_" +
+                          std::to_string(k) + (crop_jpg > 0 ? ".jpg" : ".png");
+        if (save_image(out + "/crops/" + key, c, crop_jpg)) {
           cl += key + "\t\t" + p.text.cls + "\t" + p.text.hira + "\t" + p.text.serial + "\n";
+          // the plate's 4 corners inside the crop (TL TR BR BL) — jlpr gen's corners.txt format
+          ccor += key;
+          for (const Pt& qq : p.quad) { snprintf(line, sizeof line, " %.2f %.2f", qq.x - cx0, qq.y - cy0); ccor += line; }
+          ccor += "\n";
           ncrops[(size_t)i]++;
         }
       }
@@ -197,6 +205,7 @@ int main(int argc, char** argv) {
     }
     meta[(size_t)i] = m;
     clab[(size_t)i] = cl;
+    ccorners[(size_t)i] = ccor;
     nplates[(size_t)i] = (int)placed.size();
   }
 
@@ -210,6 +219,10 @@ int main(int argc, char** argv) {
     for (const std::string& s : clab) L += s;
     std::string lp = out + (start ? "/crops/labels_" + std::to_string(start) + ".tsv" : "/crops/labels.tsv");
     write_file(lp, L.data(), L.size());
+    std::string C;
+    for (const std::string& s : ccorners) C += s;
+    std::string cp = out + (start ? "/crops/corners_" + std::to_string(start) + ".txt" : "/crops/corners.txt");
+    write_file(cp, C.data(), C.size());
   }
   long np = 0, nc = 0;
   for (int i = 0; i < count; ++i) { np += nplates[(size_t)i]; nc += ncrops[(size_t)i]; }

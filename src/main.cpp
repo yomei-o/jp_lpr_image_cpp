@@ -74,7 +74,8 @@ int main(int argc, char** argv) {
   bool crops = flag(argc, argv, "--crops"), scenes = !flag(argc, argv, "--no-scenes");
   bool by_category = arg(argc, argv, "--classes", "plate") == "category";
   int crop_min = atoi(arg(argc, argv, "--crop-min", "40").c_str());
-  int crop_jpg = atoi(arg(argc, argv, "--crop-jpg", "0").c_str());     // >0: crops as JPEG of this quality
+  int crop_jpg = atoi(arg(argc, argv, "--crop-jpg", "0").c_str());
+  bool rectify = flag(argc, argv, "--rectify");   // crops pulled upright from the 4 corners (like a reader)     // >0: crops as JPEG of this quality
 
   // fonts: bundled first (they are the fallback order), then the OS faces
   FontSet fs;
@@ -183,7 +184,35 @@ int main(int argc, char** argv) {
            p.text.cls + "\t" + p.text.hira + "\t" + p.text.serial;
       for (const Pt& c : p.quad) { snprintf(line, sizeof line, "\t%.1f\t%.1f", c.x, c.y); m += line; }
       m += "\t" + p.fonts + "\n";
-      if (crops && x1 - x0 >= crop_min) {
+      if (crops && rectify && x1 - x0 >= crop_min) {
+        // What a reader that rectifies sees (yolo_lpr_cpp warp_to_input, margin 0.06): the plate
+        // pulled upright out of the degraded scene. The 4 corners are jittered first, as a corner
+        // net's estimate would be, and the crop records the nominal rectangle it believes in.
+        const double m = 0.06;
+        const Quad& Q = p.quad;
+        double topw = std::hypot(Q[1].x - Q[0].x, Q[1].y - Q[0].y);
+        int ow = std::clamp((int)std::lround(topw * (1 + 2 * m)), 64, 256), oh = std::max(32, ow / 2);
+        double sd = rng.range(0.0, 0.03) * topw;
+        Quad jq;
+        for (int c = 0; c < 4; ++c) jq[(size_t)c] = {Q[(size_t)c].x + rng.normal() * sd, Q[(size_t)c].y + rng.normal() * sd * 0.5};
+        double lx = m / (1 + 2 * m) * ow, hx = (1 + m) / (1 + 2 * m) * ow, ly = m / (1 + 2 * m) * oh, hy = (1 + m) / (1 + 2 * m) * oh;
+        Quad dst = {Pt{lx, ly}, Pt{hx, ly}, Pt{hx, hy}, Pt{lx, hy}};
+        std::array<double, 9> Hm = homography(dst, jq);
+        Img c(ow, oh, 3);
+        for (int yy = 0; yy < oh; ++yy)
+          for (int xx = 0; xx < ow; ++xx) {
+            Pt s = apply(Hm, xx + 0.5, yy + 0.5);
+            im.sample((float)s.x, (float)s.y, c.at(xx, yy));
+          }
+        std::string key = std::string(kCategoryDir[p.text.category]) + "/" + p.text.region + "/" + name + "_" +
+                          std::to_string(k) + (crop_jpg > 0 ? ".jpg" : ".png");
+        if (save_image(out + "/crops/" + key, c, crop_jpg)) {
+          cl += key + "\t\t" + p.text.cls + "\t" + p.text.hira + "\t" + p.text.serial + "\n";
+          snprintf(line, sizeof line, " %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f\n", lx, ly, hx, ly, hx, hy, lx, hy);
+          ccor += key + line;
+          ncrops[(size_t)i]++;
+        }
+      } else if (crops && x1 - x0 >= crop_min) {
         double mx = (x1 - x0) * rng.range(0.02, 0.15), my = (y1 - y0) * rng.range(0.02, 0.2);
         int cx0 = std::max(0, (int)(x0 - mx)), cy0 = std::max(0, (int)(y0 - my));
         Img c = crop(im, cx0, cy0, (int)std::ceil(x1 + mx), (int)std::ceil(y1 + my));
